@@ -9,18 +9,26 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { notify } from "./notify.ts";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 // Minimal pi.sendMessage mock
-function createMockPi(): { pi: { sendMessage: (msg: unknown) => void }; lastMessage: () => Record<string, unknown> | null } {
+type MockPI = { sendMessage: (msg: unknown) => void };
+
+function createMockPi(): { pi: MockPI; lastMessage: () => Record<string, unknown> | null } {
 	let message: Record<string, unknown> | null = null;
 	return {
 		pi: {
 			sendMessage: (msg: unknown) => {
 				message = msg as Record<string, unknown>;
 			},
-		} as unknown as import("@mariozechner/pi-coding-agent").ExtensionAPI,
+		},
 		lastMessage: () => message,
 	};
+}
+
+// Thin cast wrapper so notify() accepts our mock
+function sendNotification(pi: MockPI, message: string, opts?: Parameters<typeof notify>[2]): void {
+	notify(pi as unknown as ExtensionAPI, message, opts);
 }
 
 describe("Telemetry Renderer", () => {
@@ -28,7 +36,7 @@ describe("Telemetry Renderer", () => {
 		it("sends a custom message via pi.sendMessage", () => {
 			const { pi, lastMessage } = createMockPi();
 
-			notify(pi, "Package loaded", {
+			sendNotification(pi, "Package loaded", {
 				package: "test-pkg",
 				severity: "success",
 			});
@@ -43,7 +51,7 @@ describe("Telemetry Renderer", () => {
 		it("includes badge options in details", () => {
 			const { pi, lastMessage } = createMockPi();
 
-			notify(pi, "Edit blocked", {
+			sendNotification(pi, "Edit blocked", {
 				package: "read-guard",
 				severity: "warning",
 				badge: { text: "BLOCKED", variant: "warning" },
@@ -62,7 +70,7 @@ describe("Telemetry Renderer", () => {
 		it("handles missing package gracefully", () => {
 			const { pi, lastMessage } = createMockPi();
 
-			notify(pi, "Generic notification");
+			sendNotification(pi, "Generic notification");
 
 			const msg = lastMessage();
 			assert.equal(msg?.content, "Generic notification");
@@ -72,7 +80,7 @@ describe("Telemetry Renderer", () => {
 		it("handles error severity", () => {
 			const { pi, lastMessage } = createMockPi();
 
-			notify(pi, "Something broke", {
+			sendNotification(pi, "Something broke", {
 				package: "test-pkg",
 				severity: "error",
 			});

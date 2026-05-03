@@ -35,7 +35,12 @@
     "@sinclair/typebox": "*"
   },
   "devDependencies": {
-    "tsx": "^4.21.0"
+    "@mariozechner/pi-ai": "^0.72.1",
+    "@mariozechner/pi-coding-agent": "^0.72.1",
+    "@mariozechner/pi-tui": "^0.72.1",
+    "@sinclair/typebox": "^0.34.49",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
   },
   "engines": {
     "node": ">=20.0.0"
