@@ -1,0 +1,43 @@
+{
+  "name": "pi-telemetry",
+  "version": "0.1.0",
+  "description": "Monitoring and telemetry framework for pi extensions — package registry, usage tracking, cost attribution, error monitoring, and badge-style UI notifications",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./registry": "./src/registry.ts",
+    "./collector": "./src/collector.ts",
+    "./bus": "./src/bus.ts",
+    "./renderer": "./src/renderer.ts",
+    "./widget": "./src/widget.ts",
+    "./commands": "./src/commands.ts",
+    "./types": "./src/types.ts"
+  },
+  "files": [
+    "src/",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "tsx --test \"src/**/*.test.ts\""
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
+    "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
