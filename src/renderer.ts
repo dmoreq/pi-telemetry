@@ -16,20 +16,20 @@
  */
 
 import type { ExtensionAPI, Theme } from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
+import type { Component } from "@mariozechner/pi-tui";
 import type { BadgeVariant, NotifyOptions } from "./types.ts";
 import { TELEMETRY_MSG_TYPE } from "./notify.ts";
 
 // ── Badge variant → theme color mapping ────────────────────────────────
 
-function badgeColor(theme: Theme, variant: BadgeVariant): (text: string) => string {
+function badgeColor(theme: { fg: (color: string, text: string) => string }, variant: BadgeVariant): (text: string) => string {
 	switch (variant) {
-		case "info": return (t: string) => theme.fg("accent", t);
-		case "success": return (t: string) => theme.fg("success", t);
-		case "warning": return (t: string) => theme.fg("warning", t);
-		case "danger": return (t: string) => theme.fg("error", t);
-		case "primary": return (t: string) => theme.fg("toolTitle", t);
-		case "secondary": return (t: string) => theme.fg("muted", t);
+		case "info": return (t: string) => (theme.fg as (c: string, t: string) => string)("accent", t);
+		case "success": return (t: string) => (theme.fg as (c: string, t: string) => string)("success", t);
+		case "warning": return (t: string) => (theme.fg as (c: string, t: string) => string)("warning", t);
+		case "danger": return (t: string) => (theme.fg as (c: string, t: string) => string)("error", t);
+		case "primary": return (t: string) => (theme.fg as (c: string, t: string) => string)("toolTitle", t);
+		case "secondary": return (t: string) => (theme.fg as (c: string, t: string) => string)("muted", t);
 		case "light": return (t: string) => t;
 	}
 }
@@ -54,10 +54,37 @@ function severityEmoji(severity: string): string {
 	}
 }
 
+// ── Simple Text Component ────────────────────────────────────────────────
+
+class TextComponent implements Component {
+	private readonly lines: string[];
+
+	constructor(text: string) {
+		this.lines = text.split("\n");
+	}
+
+	get width(): number {
+		return Math.max(...this.lines.map(l => l.length), 0);
+	}
+
+	get height(): number {
+		return this.lines.length;
+	}
+
+	render(_width: number): string[] {
+		return this.lines;
+	}
+
+	invalidate(): void {
+		// no-op
+	}
+}
+
 // ── Renderer registration ───────────────────────────────────────────────
 
 export function registerTelemetryMessageRenderer(pi: ExtensionAPI): void {
 	pi.registerMessageRenderer(TELEMETRY_MSG_TYPE, (message, options, theme) => {
+		const themeAdapter = { fg: (c: string, t: string) => (theme.fg as (color: string, text: string) => string)(c, t) };
 		const details = (message.details ?? {}) as NotifyOptions & {
 			severity?: string;
 			badge?: { text: string; variant: BadgeVariant };
@@ -68,25 +95,26 @@ export function registerTelemetryMessageRenderer(pi: ExtensionAPI): void {
 		const emoji = severityEmoji(severity);
 		const variant = details.badge?.variant ?? severityToVariant(severity);
 		const badgeLabel = details.badge?.text ?? details.package ?? "telemetry";
-		const color = badgeColor(theme, variant);
+		const color = badgeColor(themeAdapter, variant);
 
 		// Build the badge: [package-name]
-		const badge = theme.fg("muted", "[") + color(badgeLabel) + theme.fg("muted", "]");
+		const badge = (theme.fg as (c: string, t: string) => string)("muted", "[") + color(badgeLabel) + (theme.fg as (c: string, t: string) => string)("muted", "]");
 
-		// Build the message line
-		const textColor = severity === "error" ? (t: string) => theme.fg("error", t)
-			: severity === "warning" ? (t: string) => theme.fg("warning", t)
+		// Build the message line — convert content to string if needed
+		const contentStr = typeof message.content === "string" ? message.content : "";
+		const textColor = severity === "error" ? (t: string) => (theme.fg as (c: string, t: string) => string)("error", t)
+			: severity === "warning" ? (t: string) => (theme.fg as (c: string, t: string) => string)("warning", t)
 			: (t: string) => t;
 
-		let text = `${badge} ${color(emoji)} ${textColor(message.content)}`;
+		let text = `${badge} ${color(emoji)} ${textColor(contentStr)}`;
 
 		// Expanded view shows details
 		if (options.expanded && details.details) {
 			const detailStr = JSON.stringify(details.details, null, 2);
-			text += "\n" + theme.fg("dim", detailStr);
+			text += "\n" + (theme.fg as (c: string, t: string) => string)("muted", detailStr);
 		}
 
-		return new Text(text, 0, 0);
+		return new TextComponent(text);
 	});
 }
 

@@ -7,13 +7,57 @@
  * /health           — Quick per-package health overview
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import type { PackageRegistry } from "./registry.ts";
 import type { TelemetryCollector } from "./collector.ts";
-import type { RegisteredPackage, PackageTelemetry, SessionTelemetry } from "./types.ts";
+import type { PackageTelemetry, SessionTelemetry } from "./types.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
+
+// ── Notification severity type ───────────────────────────────────────────
+
+type NotifySeverity = "error" | "info" | "success" | "warning";
+
+// ── Theme-like interface (avoids ThemeColor dependency) ──────────────────
+
+interface ThemeLike {
+	fg: (color: string, text: string) => string;
+	bold: (text: string) => string;
+}
+
+interface DashboardCtx {
+	ui: {
+		notify: (msg: string, severity: NotifySeverity) => void;
+		theme: ThemeLike;
+	};
+}
+
+interface ExportCtx {
+	cwd: string;
+	ui: {
+		notify: (msg: string, severity: NotifySeverity) => void;
+	};
+}
+
+interface ReportCtx {
+	ui: {
+		notify: (msg: string, severity: NotifySeverity) => void;
+	};
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+function adaptCtx(ctx: ExtensionCommandContext): { cwd: string; notify: (msg: string, sev: NotifySeverity) => void; theme: ThemeLike } {
+	return {
+		cwd: ctx.cwd,
+		notify: (msg: string, sev: NotifySeverity) => (ctx.ui.notify as (m: string, s: string) => void)(msg, sev),
+		theme: {
+			fg: (color: string, text: string) => (ctx.ui.theme.fg as (c: string, t: string) => string)(color, text),
+			bold: (text: string) => ctx.ui.theme.bold(text),
+		},
+	};
+}
 
 // ── Registration ────────────────────────────────────────────────────────
 
@@ -34,19 +78,20 @@ export function registerTelemetryCommands(
 		},
 		handler: async (args, ctx) => {
 			const trimmed = args.trim().toLowerCase();
+			const { notify, theme } = adaptCtx(ctx);
 
 			if (trimmed === "export") {
-				await handleExport(collector, ctx);
+				await handleExport(collector, { cwd: ctx.cwd, ui: { notify } });
 				return;
 			}
 
 			if (trimmed === "report") {
-				await handleReport(registry, collector, ctx);
+				await handleReport(registry, collector, { ui: { notify } });
 				return;
 			}
 
 			// Default: show dashboard as widget
-			showDashboard(registry, collector, ctx);
+			showDashboard(registry, collector, { ui: { notify, theme } });
 		},
 	});
 
@@ -62,7 +107,7 @@ export function registerTelemetryCommands(
 			}
 
 			const health = registry.health();
-			const theme = ctx.ui.theme;
+			const theme = adaptCtx(ctx).theme;
 			const lines: string[] = [];
 			lines.push(`Health Check (${health.total} packages):`);
 			lines.push("");
@@ -99,7 +144,7 @@ export function registerTelemetryCommands(
 function showDashboard(
 	registry: PackageRegistry,
 	collector: TelemetryCollector,
-	ctx: { ui: { notify: (msg: string, severity: string) => void; theme: { fg: (c: string, t: string) => string; bold: (t: string) => string } } },
+	ctx: DashboardCtx,
 ): void {
 	const packages = registry.list();
 	const snapshot = collector.getSnapshot();
@@ -146,7 +191,7 @@ function showDashboard(
 
 async function handleExport(
 	collector: TelemetryCollector,
-	ctx: { cwd: string; ui: { notify: (msg: string, severity: string) => void } },
+	ctx: ExportCtx,
 ): Promise<void> {
 	const snapshot = collector.getSnapshot();
 	const exportDir = join(ctx.cwd, ".pi", "telemetry");
@@ -170,7 +215,7 @@ async function handleExport(
 async function handleReport(
 	registry: PackageRegistry,
 	collector: TelemetryCollector,
-	ctx: { ui: { notify: (msg: string, severity: string) => void } },
+	ctx: ReportCtx,
 ): Promise<void> {
 	const snapshot = collector.getSnapshot();
 	const packages = registry.list();
@@ -221,7 +266,7 @@ async function handleReport(
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────
+// ── Pure helpers ────────────────────────────────────────────────────────
 
 function formatCost(cost: number): string {
 	if (cost === 0) return "$0.00";

@@ -36,21 +36,20 @@ export function registerTelemetryWidget(
 		}
 
 		const theme = ctx.ui.theme;
-		const lines: string[] = [];
+		const fg = (color: string, text: string) => (theme.fg as (c: string, t: string) => string)(color, text);
 		const parts: string[] = ["📊"];
 
 		const display = packages.slice(0, MAX_WIDGET_PKGS);
 		for (const pkg of display) {
-			const dot = getDot(theme, pkg.status);
+			const dot = getDot(fg, pkg.status);
 			parts.push(`${dot} ${pkg.name}`);
 		}
 
 		if (packages.length > MAX_WIDGET_PKGS) {
-			parts.push(theme.fg("dim", `+${packages.length - MAX_WIDGET_PKGS}`));
+			parts.push(fg("dim", `+${packages.length - MAX_WIDGET_PKGS}`));
 		}
 
-		lines.push(parts.join("  "));
-		ctx.ui.setWidget(WIDGET_KEY, lines);
+		ctx.ui.setWidget(WIDGET_KEY, [parts.join("  ")]);
 	}
 
 	// Initial render
@@ -64,12 +63,12 @@ export function registerTelemetryWidget(
 	});
 }
 
-function getDot(theme: { fg: (color: string, text: string) => string }, status: string): string {
+function getDot(fg: (color: string, text: string) => string, status: string): string {
 	switch (status) {
-		case "healthy": return theme.fg("success", "◉");
-		case "degraded": return theme.fg("warning", "◉");
-		case "error": return theme.fg("error", "◉");
-		case "stale": return theme.fg("dim", "○");
-		default: return theme.fg("dim", "○");
+		case "healthy": return fg("success", "◉");
+		case "degraded": return fg("warning", "◉");
+		case "error": return fg("error", "◉");
+		case "stale": return fg("dim", "○");
+		default: return fg("dim", "○");
 	}
 }

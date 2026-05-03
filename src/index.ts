@@ -226,7 +226,7 @@ export class Telemetry {
 	/**
 	 * Auto-track every tool result — record timing and errors.
 	 */
-	private handleToolResult(event: { toolName?: string; toolCallId?: string; isError?: boolean; content?: Array<{ text?: string }> }): void {
+	private handleToolResult(event: { toolName?: string; toolCallId?: string; isError?: boolean; content?: unknown }): void {
 		const toolName = event.toolName ?? "unknown";
 		const toolCallId = event.toolCallId ?? `${toolName}-${Date.now()}`;
 		const isError = event.isError ?? false;
