@@ -8,7 +8,7 @@ import { PackageRegistry } from "./registry.ts";
 
 describe("PackageRegistry", () => {
 	describe("register", () => {
-		it("creates entry with healthy status", () => {
+		it("creates entry with healthy status and healthHistory", () => {
 			const registry = new PackageRegistry();
 			registry.register({
 				name: "test-pkg",
@@ -24,6 +24,7 @@ describe("PackageRegistry", () => {
 			assert.equal(pkg.invocations, 0);
 			assert(pkg.registeredAt > 0);
 			assert(pkg.lastHeartbeat > 0);
+			assert.deepEqual(pkg.healthHistory, ["healthy"]);
 		});
 
 		it("includes optional fields", () => {
@@ -132,6 +133,35 @@ describe("PackageRegistry", () => {
 			assert.equal(h.healthy, 1);
 			assert.equal(h.error, 1);
 			assert.equal(h.total, 2);
+		});
+	});
+
+	describe("trend", () => {
+		it("returns stable for packages with no history", () => {
+			const registry = new PackageRegistry();
+			registry.register({ name: "test-pkg", version: "1.0.0", description: "Test" });
+			assert.equal(registry.trend("test-pkg"), "stable");
+		});
+
+		it("returns stable for unknown package", () => {
+			const registry = new PackageRegistry();
+			assert.equal(registry.trend("nonexistent"), "stable");
+		});
+
+		it("returns degrading when status worsens", () => {
+			const registry = new PackageRegistry();
+			registry.register({ name: "test-pkg", version: "1.0.0", description: "Test" });
+			registry.heartbeat("test-pkg", { status: "error", error: "Broke" });
+			assert.equal(registry.trend("test-pkg"), "degrading");
+		});
+
+		it("returns improving when trend improves (manually authored history)", () => {
+			const registry = new PackageRegistry();
+			registry.register({ name: "test-pkg", version: "1.0.0", description: "Test" });
+			// Manually set a healthHistory that shows improvement
+			const pkg = registry.get("test-pkg")!;
+			pkg.healthHistory = ["error", "error", "healthy", "healthy"];
+			assert.equal(registry.trend("test-pkg"), "improving");
 		});
 	});
 });

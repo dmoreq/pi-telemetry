@@ -50,6 +50,21 @@ export interface PackageError {
 	count: number;
 }
 
+/**
+ * A historical error entry for the error-history array.
+ */
+export interface PackageErrorEntry {
+	type: string;
+	message: string;
+	timestamp: number;
+	stack?: string;
+}
+
+/**
+ * Maximum number of recent errors kept per package.
+ */
+export const MAX_ERROR_HISTORY = 10;
+
 // ── Telemetry Types ─────────────────────────────────────────────────────
 
 export interface ToolTelemetry {
@@ -104,12 +119,14 @@ export interface PackageTelemetry {
 	status: PackageStatus;
 	/** Last error (if any) */
 	lastError?: PackageError;
+	/** Recent error history (last MAX_ERROR_HISTORY entries) */
+	errorHistory: PackageErrorEntry[];
 }
 
 export interface SessionTelemetry {
 	/** Session start timestamp */
 	sessionStart: number;
-	/** Session end timestamp (optional) */
+	/** Session end timestamp (optional, set on session_shutdown) */
 	sessionEnd?: number;
 	/** Per-package telemetry data */
 	packages: Record<string, PackageTelemetry>;
@@ -121,6 +138,10 @@ export interface SessionTelemetry {
 	totalInvocations: number;
 	/** Total errors across all packages */
 	totalErrors: number;
+	/** Domain events across all packages (last 500) */
+	events: DomainEvent[];
+	/** Metrics across all packages */
+	metrics: Record<string, MetricEntry[]>;
 }
 
 // ── Message Bus Types ───────────────────────────────────────────────────
@@ -162,6 +183,63 @@ export interface NotifyOptions {
 	};
 	/** Additional details for expanded view */
 	details?: Record<string, unknown>;
+}
+
+// ── Domain Events ────────────────────────────────────────────────────────
+
+/**
+ * A structured domain event — the preferred way to record non-tool activity.
+ * Replaces fake tool invocations for events like injections, pruning, task captures, etc.
+ */
+export interface DomainEvent {
+	/** Source package name */
+	package: string;
+	/** Event type, e.g. "injection", "pruning", "task-captured", "format-run" */
+	type: string;
+	/** Human-readable label shown in the timeline */
+	label: string;
+	/** Timestamp when the event occurred */
+	timestamp: number;
+	/** Optional structured payload */
+	data?: Record<string, unknown>;
+}
+
+/**
+ * Maximum number of domain events kept across the session.
+ */
+export const MAX_DOMAIN_EVENTS = 500;
+
+// ── Metrics ─────────────────────────────────────────────────────────────
+
+/**
+ * A recorded metric value — aggregated numeric data points.
+ * Used for counters, gauges, and ratios that are not tool-invocation based.
+ */
+export interface MetricEntry {
+	/** Metric name, e.g. "dep-context-triggers", "tokens-saved", "savings-ratio" */
+	name: string;
+	/** The numeric value */
+	value: number;
+	/** Timestamp when recorded */
+	timestamp: number;
+	/** Optional tags for filtering */
+	tags?: Record<string, string>;
+	/** If true, this value is cumulative and should be summed; otherwise it's a snapshot */
+	cumulative: boolean;
+}
+
+/**
+ * Aggregated metric summary for dashboard display.
+ */
+export interface MetricSummary {
+	name: string;
+	total: number;
+	average: number;
+	min: number;
+	max: number;
+	count: number;
+	lastValue: number;
+	cumulative: boolean;
 }
 
 // ── Bus Payloads ────────────────────────────────────────────────────────

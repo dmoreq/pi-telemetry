@@ -9,7 +9,12 @@ import type {
 	PackageTelemetry,
 	SessionTelemetry,
 	ToolTelemetry,
+	PackageErrorEntry,
+	DomainEvent,
+	MetricEntry,
+	MetricSummary,
 } from "./types.ts";
+import { MAX_ERROR_HISTORY, MAX_DOMAIN_EVENTS } from "./types.ts";
 
 // ── Constants ───────────────────────────────────────────────────────────
 
@@ -54,6 +59,7 @@ function createPackageTelemetry(name: string, version: string): PackageTelemetry
 		tools: {},
 		lastHeartbeat: 0,
 		status: "healthy",
+		errorHistory: [],
 	};
 }
 
@@ -73,7 +79,10 @@ function computeErrorRate(errors: number, invocations: number): number {
 
 export class TelemetryCollector {
 	private readonly packages = new Map<string, PackageTelemetry>();
+	private readonly events: DomainEvent[] = [];
+	private readonly metrics = new Map<string, MetricEntry[]>();
 	private sessionStart = Date.now();
+	private sessionEnd: number | undefined;
 
 	// ── Public API ──────────────────────────────────────────────────────
 
@@ -122,6 +131,93 @@ export class TelemetryCollector {
 		pkg.errorRate = computeErrorRate(pkg.totalErrors, pkg.totalInvocations);
 	}
 
+	// ── Domain Events ───────────────────────────────────────────────────
+
+	/**
+	 * Record a structured domain event (non-tool activity).
+	 */
+	recordEvent(pkgName: string, type: string, label: string, data?: Record<string, unknown>): void {
+		const event: DomainEvent = {
+			package: pkgName,
+			type,
+			label,
+			timestamp: Date.now(),
+			data,
+		};
+		this.events.push(event);
+		if (this.events.length > MAX_DOMAIN_EVENTS) {
+			this.events.splice(0, this.events.length - MAX_DOMAIN_EVENTS);
+		}
+	}
+
+	/**
+	 * Get all domain events, optionally filtered by package and/or type.
+	 */
+	getEvents(pkgName?: string, type?: string): DomainEvent[] {
+		let result = this.events;
+		if (pkgName) result = result.filter(e => e.package === pkgName);
+		if (type) result = result.filter(e => e.type === type);
+		return result;
+	}
+
+	// ── Metrics ───────────────────────────────────────────────────────
+
+	/**
+	 * Record a numeric metric value.
+	 */
+	recordMetric(name: string, value: number, opts?: { cumulative?: boolean; tags?: Record<string, string> }): void {
+		const entry: MetricEntry = {
+			name,
+			value,
+			timestamp: Date.now(),
+			tags: opts?.tags,
+			cumulative: opts?.cumulative ?? false,
+		};
+		const existing = this.metrics.get(name);
+		if (existing) {
+			existing.push(entry);
+		} else {
+			this.metrics.set(name, [entry]);
+		}
+	}
+
+	/**
+	 * Get all metric values for a given name.
+	 */
+	getMetrics(name: string): MetricEntry[] {
+		return this.metrics.get(name) ?? [];
+	}
+
+	/**
+	 * Get all metric names.
+	 */
+	getMetricNames(): string[] {
+		return [...this.metrics.keys()];
+	}
+
+	/**
+	 * Compute aggregated summary for all metrics.
+	 */
+	getMetricSummaries(): MetricSummary[] {
+		const summaries: MetricSummary[] = [];
+		for (const [name, entries] of this.metrics) {
+			if (entries.length === 0) continue;
+			const total = entries.reduce((s, e) => s + e.value, 0);
+			const values = entries.map(e => e.value);
+			summaries.push({
+				name,
+				total,
+				average: total / entries.length,
+				min: Math.min(...values),
+				max: Math.max(...values),
+				count: entries.length,
+				lastValue: values[values.length - 1],
+				cumulative: entries[0]!.cumulative,
+			});
+		}
+		return summaries.sort((a, b) => b.count - a.count);
+	}
+
 	/**
 	 * Record token attribution for a package.
 	 */
@@ -146,17 +242,26 @@ export class TelemetryCollector {
 	}
 
 	/**
-	 * Record an error for a package.
+	 * Record an error for a package with error history.
 	 */
-	recordError(pkgName: string, type: string, message: string, _stack?: string): void {
+	recordError(pkgName: string, type: string, message: string, stack?: string): void {
 		const pkg = this.getOrCreate(pkgName, "0.0.0");
 		pkg.totalErrors++;
+		const now = Date.now();
 		pkg.lastError = {
 			type,
 			message,
-			timestamp: Date.now(),
+			timestamp: now,
 			count: (pkg.lastError?.count ?? 0) + 1,
 		};
+
+		// Append to error history, capped at MAX_ERROR_HISTORY
+		const entry: PackageErrorEntry = { type, message, timestamp: now, stack };
+		pkg.errorHistory.push(entry);
+		if (pkg.errorHistory.length > MAX_ERROR_HISTORY) {
+			pkg.errorHistory = pkg.errorHistory.slice(-MAX_ERROR_HISTORY);
+		}
+
 		pkg.errorRate = computeErrorRate(pkg.totalErrors, pkg.totalInvocations);
 	}
 
@@ -200,16 +305,25 @@ export class TelemetryCollector {
 		let totalErrors = 0;
 
 		for (const [name, pkg] of this.packages) {
-			packages[name] = { ...pkg, tools: { ...pkg.tools } };
+			packages[name] = { ...pkg, tools: { ...pkg.tools }, errorHistory: [...pkg.errorHistory] };
 			totalTokens += pkg.totalTokens;
 			totalCost += pkg.estimatedCost;
 			totalInvocations += pkg.totalInvocations;
 			totalErrors += pkg.totalErrors;
 		}
 
+		// Build metrics snapshot: latest value per metric name
+		const metricsSnapshot: Record<string, MetricEntry[]> = {};
+		for (const [name, entries] of this.metrics) {
+			metricsSnapshot[name] = [...entries];
+		}
+
 		return {
 			sessionStart: this.sessionStart,
+			sessionEnd: this.sessionEnd,
 			packages,
+			events: [...this.events],
+			metrics: metricsSnapshot,
 			totalTokens,
 			totalCost,
 			totalInvocations,
@@ -231,6 +345,10 @@ export class TelemetryCollector {
 		if (snapshot.sessionStart < this.sessionStart) {
 			this.sessionStart = snapshot.sessionStart;
 		}
+		// Restore sessionEnd from snapshot if present
+		if (snapshot.sessionEnd !== undefined && (this.sessionEnd === undefined || snapshot.sessionEnd > this.sessionEnd)) {
+			this.sessionEnd = snapshot.sessionEnd;
+		}
 
 		for (const [name, pkgData] of Object.entries(snapshot.packages)) {
 			const existing = this.packages.get(name);
@@ -249,17 +367,10 @@ export class TelemetryCollector {
 	}
 
 	/**
-	 * Record session end timestamp.
+	 * Record session end timestamp. Actually sets sessionEnd now.
 	 */
 	recordSessionEnd(): void {
-		// sessionEnd is computed lazily in getSnapshot
-	}
-
-	/**
-	 * Update session end on snapshot for final export.
-	 */
-	private setSessionEnd(): void {
-		// Handled by getSnapshot being called at session_shutdown
+		this.sessionEnd = Date.now();
 	}
 
 	/**
@@ -267,6 +378,8 @@ export class TelemetryCollector {
 	 */
 	reset(): void {
 		this.packages.clear();
+		this.events.length = 0;
+		this.metrics.clear();
 		this.sessionStart = Date.now();
 	}
 
