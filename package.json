@@ -1,6 +1,6 @@
 {
   "name": "pi-telemetry",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Monitoring and telemetry framework for pi extensions — package registry, usage tracking, cost attribution, error monitoring, and badge-style UI notifications",
   "license": "MIT",
   "type": "module",
