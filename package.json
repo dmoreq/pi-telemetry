@@ -14,7 +14,8 @@
     "./renderer": "./src/renderer.ts",
     "./widget": "./src/widget.ts",
     "./commands": "./src/commands.ts",
-    "./types": "./src/types.ts"
+    "./types": "./src/types.ts",
+    "./helpers": "./src/helpers.ts"
   },
   "files": [
     "src/",
