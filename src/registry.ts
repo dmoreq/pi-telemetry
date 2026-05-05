@@ -58,6 +58,7 @@ export class PackageRegistry {
 			status: "healthy",
 			invocations: 0,
 			totalCost: 0,
+			healthHistory: ["healthy"],
 		};
 		this.packages.set(reg.name, entry);
 	}
@@ -80,8 +81,9 @@ export class PackageRegistry {
 		const pkg = this.packages.get(name);
 		if (!pkg) return false;
 
+		const newStatus = this.computeStatus(pkg);
 		pkg.lastHeartbeat = Date.now();
-		pkg.status = this.computeStatus(pkg);
+		pkg.status = newStatus;
 
 		if (opts?.status) {
 			pkg.status = opts.status;
@@ -94,6 +96,12 @@ export class PackageRegistry {
 				timestamp: Date.now(),
 				count: (pkg.lastError?.count ?? 0) + 1,
 			};
+		}
+
+		// Track health history (last 5 statuses for trend detection)
+		pkg.healthHistory.push(pkg.status);
+		if (pkg.healthHistory.length > 5) {
+			pkg.healthHistory = pkg.healthHistory.slice(-5);
 		}
 
 		return true;
@@ -150,5 +158,34 @@ export class PackageRegistry {
 		if (elapsed < HEARTBEAT_HEALTHY_MS) return "healthy";
 		if (elapsed < HEARTBEAT_DEGRADED_MS) return "degraded";
 		return "stale";
+	}
+
+	/**
+	 * Get health trend for a package based on its health history.
+	 * Returns "stable", "improving", or "degrading".
+	 */
+	trend(name: string): "stable" | "improving" | "degrading" {
+		const pkg = this.packages.get(name);
+		if (!pkg || pkg.healthHistory.length < 2) return "stable";
+
+		const history = pkg.healthHistory;
+		const first = history[0];
+		const last = history[history.length - 1];
+
+		const statusWeight = (s: PackageStatus): number => {
+			switch (s) {
+				case "healthy": return 3;
+				case "degraded": return 2;
+				case "error": return 1;
+				case "stale": return 0;
+			}
+		};
+
+		const firstW = statusWeight(first);
+		const lastW = statusWeight(last);
+
+		if (lastW > firstW) return "improving";
+		if (lastW < firstW) return "degrading";
+		return "stable";
 	}
 }

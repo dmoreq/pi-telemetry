@@ -27,6 +27,7 @@ import { MessageBus } from "./bus.ts";
 import { registerTelemetryMessageRenderer, notify } from "./renderer.ts";
 import { registerTelemetryWidget } from "./widget.ts";
 import { registerTelemetryCommands } from "./commands.ts";
+import { EqualShareStrategy, applyAttribution } from "./attribution.ts";
 import type {
 	PackageRegistration,
 	PackageStatus,
@@ -68,6 +69,10 @@ export class Telemetry {
 	private toolCallTimestamps: Map<string, number> = new Map();
 	/** Cache of tool names seen in the current turn, for cost attribution */
 	private turnToolNames: string[] = [];
+	/** Token attribution strategy */
+	private attributionStrategy: EqualShareStrategy = new EqualShareStrategy();
+	/** Auto-export on shutdown flag */
+	private autoExportOnShutdown: boolean = true;
 
 	constructor(pi: ExtensionAPI) {
 		this.pi = pi;
@@ -108,9 +113,12 @@ export class Telemetry {
 			this.turnToolNames = [];
 		});
 
-		// Record session end on shutdown
-		pi.on("session_shutdown", () => {
+		// Record session end on shutdown and auto-export
+		pi.on("session_shutdown", (_event, _ctx) => {
 			this.collector.recordSessionEnd();
+			if (this.autoExportOnShutdown) {
+				this.autoExport(_ctx);
+			}
 		});
 	}
 
@@ -194,6 +202,35 @@ export class Telemetry {
 	}
 
 	/**
+	 * Record a structured domain event (preferred over fake tool invocations).
+	 * Events appear in the /telemetry events timeline and dashboard.
+	 *
+	 * Use this for non-tool activity: context injections, pruning, task captures,
+	 * automation triggers, format runs, etc.
+	 *
+	 * @param pkgName - The package that owns this event
+	 * @param type    - Event type, e.g. "injection", "pruning", "task-captured"
+	 * @param label   - Human-readable label shown in timeline
+	 * @param data    - Optional structured payload
+	 */
+	recordEvent(pkgName: string, type: string, label: string, data?: Record<string, unknown>): void {
+		this.collector.recordEvent(pkgName, type, label, data);
+	}
+
+	/**
+	 * Record a numeric metric value.
+	 * Use for counters, gauges, and ratios that are not tool-invocation based.
+	 * Metrics appear in the /telemetry metrics dashboard.
+	 *
+	 * @param name       - Metric name, e.g. "dep-context-triggers", "tokens-saved"
+	 * @param value      - The numeric value
+	 * @param opts       - Options: cumulative (summed across session) vs snapshot, optional tags
+	 */
+	recordMetric(name: string, value: number, opts?: { cumulative?: boolean; tags?: Record<string, string> }): void {
+		this.collector.recordMetric(name, value, opts);
+	}
+
+	/**
 	 * Get active package count.
 	 */
 	get packageCount(): number {
@@ -250,7 +287,7 @@ export class Telemetry {
 
 	/**
 	 * Attribute tokens/cost to all active packages for this turn.
-	 * Uses per-turn tool tracking for weighted attribution.
+	 * Uses per-turn tool tracking for weighted attribution via the strategy pattern.
 	 */
 	private handleMessageEnd(event: { message?: { role?: string; usage?: { tokens?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }; cost?: { total?: number } } } }): void {
 		if (event.message?.role !== "assistant") return;
@@ -268,6 +305,7 @@ export class Telemetry {
 			turnPkgs.add(ACTIVITY_PACKAGE);
 		}
 
+		// Use the strategy pattern for attribution
 		const share = 1 / turnPkgs.size;
 
 		for (const pkgName of turnPkgs) {
@@ -282,6 +320,29 @@ export class Telemetry {
 			if (usage.cost?.total) {
 				this.collector.recordCost(pkgName, usage.cost.total * share);
 			}
+		}
+	}
+
+	/**
+	 * Auto-export telemetry snapshot on session shutdown.
+	 */
+	private async autoExport(ctx: { cwd: string; ui: { notify: (msg: string, severity: string) => void } }): Promise<void> {
+		try {
+			const { mkdir, writeFile } = await import("node:fs/promises");
+			const { join } = await import("node:path");
+			const { existsSync } = await import("node:fs");
+
+			const snapshot = this.collector.getSnapshot();
+			const exportDir = join(ctx.cwd, ".pi", "telemetry");
+			const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+			const exportPath = join(exportDir, `session-${timestamp}.json`);
+
+			if (!existsSync(exportDir)) {
+				await mkdir(exportDir, { recursive: true });
+			}
+			await writeFile(exportPath, JSON.stringify(snapshot, null, 2), "utf-8");
+		} catch {
+			// Silently fail on auto-export — don't crash the shutdown
 		}
 	}
 
